@@ -15,7 +15,7 @@
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation
 {
     [self.webViewDelegate onWebViewDidFinishLoad:webView];
-    
+
     if ([self.wrappedDelegate respondsToSelector:@selector(webView:didFinishNavigation:)]) {
         [self.wrappedDelegate webView:webView didFinishNavigation:navigation];
     }
@@ -24,7 +24,7 @@
 - (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation
 {
     [self.webViewDelegate onWebViewDidStartProvisionalNavigation];
-    
+
     if ([self.wrappedDelegate respondsToSelector:@selector(webView:didStartProvisionalNavigation:)]) {
         [self.wrappedDelegate webView:webView didStartProvisionalNavigation:navigation];
     }
@@ -33,7 +33,7 @@
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error;
 {
     [self.webViewDelegate onWebViewDidFailNavigation:error];
-    
+
     if ([self.wrappedDelegate respondsToSelector:@selector(webView:didFailProvisionalNavigation:withError:)]) {
         [self.wrappedDelegate webView:webView didFailProvisionalNavigation:navigation withError:error];
     }
@@ -42,7 +42,7 @@
 - (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error;
 {
     [self.webViewDelegate onWebViewDidFailNavigation:error];
-    
+
     if ([self.wrappedDelegate respondsToSelector:@selector(webView:didFailNavigation:withError:)]) {
         [self.wrappedDelegate webView:webView didFailNavigation:navigation withError:error];
     }
@@ -58,13 +58,19 @@
 - (void)initializeDelegate:(CDVRemoteInjectionPlugin *)plugin
 {
     self.plugin = plugin;
-    
+    self.waitHandle = [NSCondition new];
+    [self.waitHandle lock];
+    [plugin.commandDelegate runInBackground: ^{
+        self.scriptBundle = [self buildInjectionJS];
+        [self.waitHandle signal];
+    }];
+
     //Wrap the current delegate with our own so we can hook into web view events.
     WKWebView *webView = [plugin findWebView];
     ourDelegate = [[CDVRemoteInjectionWKWebViewNavigationDelegate alloc] init];
     ourDelegate.wrappedDelegate = [webView navigationDelegate];
     ourDelegate.webViewDelegate = self;
-    
+
     [webView setNavigationDelegate:ourDelegate];
 }
 
@@ -74,11 +80,15 @@
 - (void) onWebViewDidFinishLoad:(WKWebView *)webView;
 {
     [self cancelRequestTimer];
-    
+
     NSString *scheme = webView.URL.scheme;
 
     if ([self isSupportedURLScheme:scheme]) {
-        [webView evaluateJavaScript:[self buildInjectionJS] completionHandler:^(id id, NSError *error){
+        if (!self.scriptBundle) {
+            [self.waitHandle wait];
+            self.waitHandle = nil;
+        }
+        [webView evaluateJavaScript:self.scriptBundle completionHandler:^(id id, NSError *error){
             if (error) {
                 // Nothing to do here other than log the error.
                 NSLog(@"Error when injecting javascript into WKWebView: '%@'.", error);
@@ -112,7 +122,7 @@
 -(void) retryCurrentRequest
 {
     WKWebView *webView = [self.plugin findWebView];
-    
+
     [webView stopLoading];
     [webView reload];
 }
