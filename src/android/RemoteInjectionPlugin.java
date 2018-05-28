@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.res.AssetManager;
 import android.util.Base64;
+import android.os.Build;
 
 import org.apache.cordova.CordovaPlugin;
 import org.apache.cordova.CordovaWebViewEngine;
@@ -137,15 +138,17 @@ public class RemoteInjectionPlugin extends CordovaPlugin {
         for (String path: jsPaths) {
             jsToInject.append(readFile(cordova.getActivity().getResources().getAssets(), path));
         }
-        String jsUrl = "javascript:var script = document.createElement('script');";
-        jsUrl += "script.src=\"data:text/javascript;charset=utf-8;base64,";
 
-        jsUrl += Base64.encodeToString(jsToInject.toString().getBytes(), Base64.NO_WRAP);
-        jsUrl += "\";";
-
-        jsUrl += "document.getElementsByTagName('head')[0].appendChild(script);";
-
-        webView.getEngine().loadUrl(jsUrl, false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            // On KITKAT or higher, use evaluateJavascript to load the JS
+            webView.getEngine().evaluateJavascript(jsToInject.toString(), null);
+        } else {
+            String jsUrl = "javascript:var script = document.createElement('script');";
+            jsUrl += "script.src=\"data:text/javascript;charset=utf-8;base64,";
+            jsUrl += Base64.encodeToString(jsToInject.toString().getBytes(), Base64.NO_WRAP);
+            jsUrl += "\";document.getElementsByTagName('head')[0].appendChild(script);";
+            webView.getEngine().loadUrl(jsUrl, false);
+        }
     }
 
     private String readFile(AssetManager assets, String filePath) {
