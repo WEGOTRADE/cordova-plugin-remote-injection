@@ -24,6 +24,9 @@ import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.regex.Pattern;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Future;
+
 
 public class RemoteInjectionPlugin extends CordovaPlugin {
     private static String TAG = "RemoteInjectionPlugin";
@@ -35,6 +38,7 @@ public class RemoteInjectionPlugin extends CordovaPlugin {
     private int promptInterval;  // Delay before prompting user to retry in seconds
 
     private RequestLifecycle lifecycle;
+    private Future<StringBuilder> scriptBundleFuture;
 
     protected void pluginInitialize() {
         String pref = webView.getPreferences().getString("CRIInjectFirstFiles", "");
@@ -46,6 +50,34 @@ public class RemoteInjectionPlugin extends CordovaPlugin {
         final Activity activity = super.cordova.getActivity();
         final CordovaWebViewEngine engine = super.webView.getEngine();
         lifecycle = new RequestLifecycle(activity, engine, promptInterval);
+
+        this.scriptBundleFuture = cordova.getThreadPool().submit(new Callable<StringBuilder>() {
+            @Override
+            public StringBuilder call() {
+                List<String> jsPaths = new ArrayList<String>();
+                for (String path: preInjectionFileNames) {
+                    jsPaths.add(path);
+                }
+
+                jsPaths.add("www/cordova.js");
+
+                // We load the plugin code manually rather than allow cordova to load them (via
+                // cordova_plugins.js).  The reason for this is the WebView will attempt to load the
+                // file in the origin of the page (e.g. https://truckmover.com/plugins/plugin/plugin.js).
+                // By loading them first cordova will skip its loading process altogether.
+                jsPaths.addAll(jsPathsToInject(cordova.getActivity().getResources().getAssets(), "www/plugins"));
+
+                // Initialize the cordova plugin registry.
+                jsPaths.add("www/cordova_plugins.js");
+
+                StringBuilder jsToInject = new StringBuilder();
+                for (String path: jsPaths) {
+                    jsToInject.append(readFile(cordova.getActivity().getResources().getAssets(), path));
+                }
+
+                return jsToInject;
+            }
+        });
     }
 
     private void onMessageTypeFailure(String messageId, Object data) {
@@ -114,40 +146,25 @@ public class RemoteInjectionPlugin extends CordovaPlugin {
     }
 
     private void injectCordova() {
-        List<String> jsPaths = new ArrayList<String>();
-        for (String path: preInjectionFileNames) {
-            jsPaths.add(path);
-        }
+        try {
+            StringBuilder jsToInject = this.scriptBundleFuture.get();
 
-        jsPaths.add("www/cordova.js");
-
-        // We load the plugin code manually rather than allow cordova to load them (via
-        // cordova_plugins.js).  The reason for this is the WebView will attempt to load the
-        // file in the origin of the page (e.g. https://truckmover.com/plugins/plugin/plugin.js).
-        // By loading them first cordova will skip its loading process altogether.
-        jsPaths.addAll(jsPathsToInject(cordova.getActivity().getResources().getAssets(), "www/plugins"));
-
-        // Initialize the cordova plugin registry.
-        jsPaths.add("www/cordova_plugins.js");
-
-        // The way that I figured out to inject for android is to inject it as a script
-        // tag with the full JS encoded as a data URI
-        // (https://developer.mozilla.org/en-US/docs/Web/HTTP/data_URIs).  The script tag
-        // is appended to the DOM and executed via a javascript URL (e.g. javascript:doJsStuff()).
-        StringBuilder jsToInject = new StringBuilder();
-        for (String path: jsPaths) {
-            jsToInject.append(readFile(cordova.getActivity().getResources().getAssets(), path));
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            // On KITKAT or higher, use evaluateJavascript to load the JS
-            webView.getEngine().evaluateJavascript(jsToInject.toString(), null);
-        } else {
-            String jsUrl = "javascript:var script = document.createElement('script');";
-            jsUrl += "script.src=\"data:text/javascript;charset=utf-8;base64,";
-            jsUrl += Base64.encodeToString(jsToInject.toString().getBytes(), Base64.NO_WRAP);
-            jsUrl += "\";document.getElementsByTagName('head')[0].appendChild(script);";
-            webView.getEngine().loadUrl(jsUrl, false);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                // On KITKAT or higher, use evaluateJavascript to load the JS
+                webView.getEngine().evaluateJavascript(jsToInject.toString(), null);
+            } else {
+                // The way that I figured out to inject for android is to inject it as a script
+                // tag with the full JS encoded as a data URI
+                // (https://developer.mozilla.org/en-US/docs/Web/HTTP/data_URIs).  The script tag
+                // is appended to the DOM and executed via a javascript URL (e.g. javascript:doJsStuff()).
+                String jsUrl = "javascript:var script = document.createElement('script');";
+                jsUrl += "script.src=\"data:text/javascript;charset=utf-8;base64,";
+                jsUrl += Base64.encodeToString(jsToInject.toString().getBytes(), Base64.NO_WRAP);
+                jsUrl += "\";document.getElementsByTagName('head')[0].appendChild(script);";
+                webView.getEngine().loadUrl(jsUrl, false);
+            }
+        } catch (Exception e) {
+            LOG.e(TAG, "Fail to inject script", e);
         }
     }
 
