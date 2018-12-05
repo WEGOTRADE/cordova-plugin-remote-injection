@@ -55,9 +55,8 @@ public class RemoteInjectionPlugin extends CordovaPlugin {
             @Override
             public StringBuilder call() {
                 List<String> jsPaths = new ArrayList<String>();
-                for (String path: preInjectionFileNames) {
-                    jsPaths.add(path);
-                }
+
+                jsPaths.addAll(preInjectionFileNames);
 
                 jsPaths.add("www/cordova.js");
 
