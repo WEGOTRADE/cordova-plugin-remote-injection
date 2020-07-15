@@ -55,9 +55,9 @@ public class RemoteInjectionPlugin extends CordovaPlugin {
             @Override
             public StringBuilder call() {
                 List<String> jsPaths = new ArrayList<String>();
-
-                jsPaths.addAll(preInjectionFileNames);
-
+                for (String path: preInjectionFileNames) {
+                    jsPaths.add(path);
+                }
                 jsPaths.add("www/cordova.js");
 
                 // We load the plugin code manually rather than allow cordova to load them (via
